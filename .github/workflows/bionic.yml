@@ -1,3 +1,4 @@
+
 name: Build Frida Bionic arm64
 on:
   workflow_dispatch
@@ -6,12 +7,11 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-      - name: Checkout Frida
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Install build dependencies
+      - name: Install deps
         run: |
           sudo apt-get update
           sudo apt-get install -y python3-pip build-essential libssl-dev libffi-dev
@@ -23,39 +23,50 @@ jobs:
           toolchain: stable
           override: true
 
-      - name: Install Rust Android arm64 target
+      - name: Add Android target
         run: rustup target add aarch64-linux-android
 
-      - name: Install Android NDK r26c
+      - name: Install NDK r26c
         run: |
           cd /tmp
           wget -q https://dl.google.com/android/repository/android-ndk-r26c-linux.zip
           unzip -q android-ndk-r26c-linux.zip
           mv android-ndk-r26c $HOME/android-ndk-r26c
-          echo "ANDROID_NDK_ROOT=$HOME/android-ndk-r26c" >> $GITHUB_ENV
 
-      - name: Build Frida Android arm64 Bionic
+      - name: Ensure submodules
+        run: python3 tools/ensure-submodules.py
+
+      - name: Configure Frida for Android ARM64
         run: |
           source "$HOME/.cargo/env"
           export ANDROID_NDK_ROOT=$HOME/android-ndk-r26c
-          # ini yang bener buat Bionic arm64
-          make core-android-arm64 -j$(nproc)
+          export FRIDA_PREFIX=$PWD/build/install
+          ./configure \
+            --prefix="$FRIDA_PREFIX" \
+            --enable-gadget \
+            --enable-server \
+            --enable-portal \
+            --enable-inject \
+            --disable-frida-tools \
+            -- \
+            -Dfrida-gum:devkits=gum,gumjs \
+            -Dfrida-core:devkits=core
 
-      - name: Locate frida-server
+      - name: Build
         run: |
-          find build -name "frida-server" -type f | tee /tmp/files.txt
-          ls -lh $(cat /tmp/files.txt | head -n1)
-
-      - name: Check architecture
-        run: file $(find build -name "frida-server" | head -n1)
+          source "$HOME/.cargo/env"
+          export ANDROID_NDK_ROOT=$HOME/android-ndk-r26c
+          make -j$(nproc)
 
       - name: Prepare artifact
         run: |
           mkdir -p out
-          cp $(find build -name "frida-server" | head -n1) out/frida-server-android-arm64-bionic
-          chmod +x out/frida-server-android-arm64-bionic
+          BIN=$(find build -name "frida-server" -type f | head -n1)
+          file "$BIN"
+          cp "$BIN" out/frida-server-android-arm64-bionic
+          ls -lh out/
 
-      - name: Upload artifact
+      - name: Upload
         uses: actions/upload-artifact@v4
         with:
           name: frida-server-android-arm64-bionic
