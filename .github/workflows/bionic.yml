@@ -16,19 +16,21 @@ jobs:
           sudo apt-get install -y python3-pip ninja-build
           pip3 install meson
 
-      - name: Configure
+      - name: Configure for Android ARM64 Bionic
         run: |
           python3 tools/ensure-submodules.py
-          ./configure --enable-server
+          ./configure --host=android-arm64 --enable-server
 
-      - name: Build Android ARM64
+      - name: Build
         run: |
-          make frida-server-android-arm64 -j$(nproc)
-          echo "--- CHECK ---"
-          file build/frida-server/android-arm64/frida-server
+          make -j$(nproc)
+          echo "--- CHECK FILE ---"
+          find build -name "frida-server" -type f -exec file {} \;
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
           name: frida-server-android-arm64-bionic
-          path: build/frida-server/android-arm64/frida-server
+          path: |
+            build/frida-server/android-arm64/frida-server
+            build/**/frida-server
