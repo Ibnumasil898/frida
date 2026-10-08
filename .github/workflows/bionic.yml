@@ -1,46 +1,113 @@
 name: Build Frida Bionic arm64
+
 on:
-  workflow_dispatch
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-22.04
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Frida
+        uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Show source version
+        run: |
+          echo "=== SOURCE VERSION ==="
+          git describe --tags --always --long || true
+          git describe --tags --exact-match HEAD 2>/dev/null || true
+          git tag --points-at HEAD || true
+          git log -1 --format='%H%n%ad%n%D' --date=iso
+
+          echo
+          echo "=== SUBMODULES ==="
+          git submodule status --recursive
 
       - name: Install deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y python3-pip ninja-build unzip
+          sudo apt-get install -y \
+            python3 \
+            python3-pip \
+            ninja-build \
+            unzip \
+            wget
+
           pip3 install meson
 
       - name: Install NDK r29
         run: |
           cd /tmp
-          wget -q https://dl.google.com/android/repository/android-ndk-r29-linux.zip
+
+          wget -q \
+            https://dl.google.com/android/repository/android-ndk-r29-linux.zip
+
           unzip -q android-ndk-r29-linux.zip
-          mv android-ndk-r29 $HOME/android-ndk-r29
-          echo "NDK_ROOT=$HOME/android-ndk-r29" >> $GITHUB_ENV
+
+          mv android-ndk-r29 "$HOME/android-ndk-r29"
+
+          echo "ANDROID_NDK_ROOT=$HOME/android-ndk-r29" >> "$GITHUB_ENV"
+          echo "NDK_ROOT=$HOME/android-ndk-r29" >> "$GITHUB_ENV"
 
       - name: Configure for Android ARM64 Bionic
         run: |
-          export ANDROID_NDK_ROOT=$HOME/android-ndk-r29
+          export ANDROID_NDK_ROOT="$HOME/android-ndk-r29"
+
           python3 tools/ensure-submodules.py
-          ./configure --host=android-arm64 --enable-server
+
+          ./configure \
+            --host=android-arm64 \
+            --enable-server
 
       - name: Build
         run: |
-          export ANDROID_NDK_ROOT=$HOME/android-ndk-r29
-          make -j$(nproc)
+          export ANDROID_NDK_ROOT="$HOME/android-ndk-r29"
+
+          make -j"$(nproc)"
+
+          echo
           echo "--- CHECK FILE ---"
           find build -name "frida-server" -type f -exec file {} \;
+
+          echo
+          echo "--- VERSION ---"
+          find build -name "frida-server" -type f -exec {} --version \;
+
+          echo
+          echo "--- SIZE ---"
+          find build -name "frida-server" -type f -exec ls -lh {} \;
+
+      - name: Verify Android ARM64 ELF
+        run: |
+          SERVER="$(find build -name 'frida-server' -type f | head -n1)"
+
+          echo "=== SERVER ==="
+          echo "$SERVER"
+
+          echo
+          echo "=== FILE ==="
+          file "$SERVER"
+
+          echo
+          echo "=== INTERPRETER ==="
+          readelf -l "$SERVER" | \
+            grep 'Requesting program interpreter'
+
+          echo
+          echo "=== NEEDED ==="
+          readelf -d "$SERVER" | grep NEEDED
+
+          echo
+          echo "=== SHA256 ==="
+          sha256sum "$SERVER"
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
           name: frida-server-android-arm64-bionic
-          path: |
-            build/frida-server/android-arm64/frida-server
-            build/**/frida-server
+          path: build/**/frida-server
+          if-no-files-found: error
