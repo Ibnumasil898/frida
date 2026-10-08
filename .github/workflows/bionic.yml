@@ -1,4 +1,4 @@
-name: Build Bionic arm64
+name: Build Frida Bionic arm64
 
 on:
   workflow_dispatch:
@@ -6,45 +6,120 @@ on:
 jobs:
   build:
     runs-on: ubuntu-22.04
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Frida
+        uses: actions/checkout@v4
         with:
           submodules: recursive
           fetch-depth: 0
 
-      - name: Install deps
+      - name: Install build dependencies
         run: |
-          sudo apt update
-          sudo apt install -y build-essential python3-pip clang pkg-config libglib2.0-dev python3-setuptools
-          pip3 install meson ninja
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            clang \
+            pkg-config \
+            libglib2.0-dev \
+            python3 \
+            python3-pip \
+            python3-setuptools \
+            python3-dev \
+            curl \
+            wget \
+            unzip
+
+          python3 -m pip install --upgrade pip
+          python3 -m pip install meson ninja
 
       - name: Setup Rust
         run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+          curl --proto '=https' \
+            --tlsv1.2 \
+            -sSf https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal
 
-      - name: Add Android target
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Install Rust Android arm64 target
         run: |
-          source $HOME/.cargo/env
+          source "$HOME/.cargo/env"
           rustup target add aarch64-linux-android
 
-      - name: Install NDK r26c
+      - name: Install Android NDK r26c
         run: |
           cd /tmp
-          wget -q https://dl.google.com/android/repository/android-ndk-r26c-linux.zip
-          unzip -q android-ndk-r26c-linux.zip
-          echo "ANDROID_NDK_ROOT=/tmp/android-ndk-r26c" >> $GITHUB_ENV
 
-      - name: Build frida-server arm64
+          wget -q \
+            https://dl.google.com/android/repository/android-ndk-r26c-linux.zip
+
+          unzip -q android-ndk-r26c-linux.zip
+
+          echo "ANDROID_NDK_ROOT=/tmp/android-ndk-r26c" >> "$GITHUB_ENV"
+          echo "/tmp/android-ndk-r26c/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_PATH"
+
+      - name: Verify Android arm64 toolchain
         run: |
-          source $HOME/.cargo/env
-          export ANDROID_NDK_ROOT=/tmp/android-ndk-r26c
-          make core-android-arm64 -j$(nproc)
+          echo "NDK: $ANDROID_NDK_ROOT"
+
+          aarch64-linux-android21-clang --version
+
+          rustc --version
+          cargo --version
+
+      - name: Build Frida Android arm64 Bionic
+        env:
+          FRIDA_HOST: android-arm64
+        run: |
+          source "$HOME/.cargo/env"
+
+          export ANDROID_NDK_ROOT="/tmp/android-ndk-r26c"
+
+          make core-android-arm64 -j"$(nproc)"
+
+      - name: Locate frida-server
+        run: |
+          echo "=== frida-server ==="
+
+          find build -type f \
+            \( -name "frida-server" -o -name "frida-server*" \) \
+            -print
+
+      - name: Check architecture
+        run: |
+          FRIDA_SERVER="$(find build -type f -name 'frida-server' | head -n 1)"
+
+          if [ -z "$FRIDA_SERVER" ]; then
+            echo "ERROR: frida-server tidak ditemukan"
+            exit 1
+          fi
+
+          echo "Binary: $FRIDA_SERVER"
+          file "$FRIDA_SERVER"
+
+          echo "$FRIDA_SERVER" | grep -q "android-arm64" || true
+
+      - name: Prepare artifact
+        run: |
+          mkdir -p artifact
+
+          FRIDA_SERVER="$(find build -type f -name 'frida-server' | head -n 1)"
+
+          if [ -z "$FRIDA_SERVER" ]; then
+            echo "ERROR: frida-server tidak ditemukan"
+            exit 1
+          fi
+
+          cp "$FRIDA_SERVER" artifact/frida-server
+
+          chmod +x artifact/frida-server
+
+          file artifact/frida-server
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: frida-server-android-arm64-bionic
-          path: |
-            build/frida-android-arm64/bin/frida-server
-            build/frida-android-arm64/lib/
+          path: artifact/frida-server
+          if-no-files-found: error
