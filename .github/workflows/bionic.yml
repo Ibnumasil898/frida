@@ -15,32 +15,46 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - name: Show source version
+      - name: Verify source and submodules
+        shell: bash
         run: |
-          echo "=== SOURCE VERSION ==="
-          git describe --tags --always --long || true
-          git describe --tags --exact-match HEAD 2>/dev/null || true
-          git tag --points-at HEAD || true
+          set -euxo pipefail
+
+          echo "=== GIT ==="
+          git describe --tags --always --long
+          git status --short
           git log -1 --format='%H%n%ad%n%D' --date=iso
 
           echo
           echo "=== SUBMODULES ==="
           git submodule status --recursive
 
-      - name: Install deps
+          echo
+          echo "=== FRIDA VERSION GENERATOR ==="
+          test -f releng/frida_version.py
+          python3 releng/frida_version.py
+
+      - name: Install dependencies
         run: |
+          set -euxo pipefail
+
           sudo apt-get update
           sudo apt-get install -y \
             python3 \
             python3-pip \
             ninja-build \
             unzip \
-            wget
+            wget \
+            file \
+            binutils
 
-          pip3 install meson
+          python3 -m pip install --user meson
 
       - name: Install NDK r29
+        shell: bash
         run: |
+          set -euxo pipefail
+
           cd /tmp
 
           wget -q \
@@ -53,37 +67,52 @@ jobs:
           echo "ANDROID_NDK_ROOT=$HOME/android-ndk-r29" >> "$GITHUB_ENV"
           echo "NDK_ROOT=$HOME/android-ndk-r29" >> "$GITHUB_ENV"
 
-      - name: Configure for Android ARM64 Bionic
+      - name: Prepare Frida submodules
+        shell: bash
         run: |
-          export ANDROID_NDK_ROOT="$HOME/android-ndk-r29"
+          set -euxo pipefail
 
           python3 tools/ensure-submodules.py
+
+          echo
+          echo "=== SUBMODULE STATUS AFTER PREPARATION ==="
+          git submodule status --recursive
+
+          echo
+          echo "=== VERSION AFTER PREPARATION ==="
+          python3 releng/frida_version.py
+
+      - name: Configure Android ARM64 Bionic
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          export ANDROID_NDK_ROOT="$HOME/android-ndk-r29"
+          export NDK_ROOT="$HOME/android-ndk-r29"
 
           ./configure \
             --host=android-arm64 \
             --enable-server
 
       - name: Build
+        shell: bash
         run: |
+          set -euxo pipefail
+
           export ANDROID_NDK_ROOT="$HOME/android-ndk-r29"
+          export NDK_ROOT="$HOME/android-ndk-r29"
 
           make -j"$(nproc)"
 
-          echo
-          echo "--- CHECK FILE ---"
-          find build -name "frida-server" -type f -exec file {} \;
-
-          echo
-          echo "--- VERSION ---"
-          find build -name "frida-server" -type f -exec {} --version \;
-
-          echo
-          echo "--- SIZE ---"
-          find build -name "frida-server" -type f -exec ls -lh {} \;
-
-      - name: Verify Android ARM64 ELF
+      - name: Verify frida-server
+        shell: bash
         run: |
-          SERVER="$(find build -name 'frida-server' -type f | head -n1)"
+          set -euxo pipefail
+
+          SERVER="$(find build -type f -name 'frida-server' | head -n1)"
+
+          test -n "$SERVER"
+          test -f "$SERVER"
 
           echo "=== SERVER ==="
           echo "$SERVER"
@@ -91,6 +120,15 @@ jobs:
           echo
           echo "=== FILE ==="
           file "$SERVER"
+
+          echo
+          echo "=== VERSION ==="
+          "$SERVER" --version
+
+          echo
+          echo "=== SIZE ==="
+          ls -lh "$SERVER"
+          stat -c '%n %s bytes' "$SERVER"
 
           echo
           echo "=== INTERPRETER ==="
@@ -105,7 +143,7 @@ jobs:
           echo "=== SHA256 ==="
           sha256sum "$SERVER"
 
-      - name: Upload
+      - name: Upload frida-server
         uses: actions/upload-artifact@v4
         with:
           name: frida-server-android-arm64-bionic
