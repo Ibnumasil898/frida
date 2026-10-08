@@ -1,0 +1,50 @@
+name: Build Bionic arm64
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install deps
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential python3-pip clang pkg-config libglib2.0-dev python3-setuptools
+          pip3 install meson ninja
+
+      - name: Setup Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Add Android target
+        run: |
+          source $HOME/.cargo/env
+          rustup target add aarch64-linux-android
+
+      - name: Install NDK r26c
+        run: |
+          cd /tmp
+          wget -q https://dl.google.com/android/repository/android-ndk-r26c-linux.zip
+          unzip -q android-ndk-r26c-linux.zip
+          echo "ANDROID_NDK_ROOT=/tmp/android-ndk-r26c" >> $GITHUB_ENV
+
+      - name: Build frida-server arm64
+        run: |
+          source $HOME/.cargo/env
+          export ANDROID_NDK_ROOT=/tmp/android-ndk-r26c
+          make core-android-arm64 -j$(nproc)
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frida-server-android-arm64-bionic
+          path: |
+            build/frida-android-arm64/bin/frida-server
+            build/frida-android-arm64/lib/
